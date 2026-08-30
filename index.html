@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nitinnit.in • Play. Create. Timepass.</title>
+<style>
+  :root{
+    --bg:#070812; --card:#101221; --text:#f5f7ff; --muted:#9da3bb;
+    --a:#7c3cff; --b:#19a7ff; --pink:#ff3eb5;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:
+      radial-gradient(circle at 15% 10%,rgba(124,60,255,.18),transparent 30%),
+      radial-gradient(circle at 90% 20%,rgba(25,167,255,.14),transparent 28%),
+      var(--bg);
+    color:var(--text); font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
+    min-height:100vh; overflow-x:hidden;
+  }
+  .wrap{width:min(1050px,92%);margin:auto}
+  nav{display:flex;justify-content:space-between;align-items:center;padding:24px 0}
+  .brand{font-weight:900;letter-spacing:-1px;font-size:22px}
+  .brand span{color:#8b5cf6}.dot{color:#28a9ff}
+  nav a{color:var(--muted);text-decoration:none;font-size:14px;margin-left:20px}
+  nav a:hover{color:white}
+  .hero{min-height:72vh;display:grid;place-items:center;text-align:center;padding:45px 0 70px}
+  .orb{
+    width:92px;height:92px;margin:0 auto 25px;border-radius:28px;
+    display:grid;place-items:center;font-size:48px;font-weight:900;
+    background:linear-gradient(135deg,var(--a),var(--b));
+    box-shadow:0 20px 70px rgba(124,60,255,.35);
+    transform:rotate(-5deg);
+  }
+  h1{font-size:clamp(48px,10vw,92px);line-height:.92;letter-spacing:-5px;margin:0}
+  h1 .grad{background:linear-gradient(90deg,#fff,#bba7ff,#53c5ff);-webkit-background-clip:text;color:transparent}
+  .tag{font-size:clamp(17px,3vw,24px);color:var(--muted);margin:25px auto 8px;max-width:650px}
+  .tiny{font-size:13px;color:#697089}
+  .buttons{display:flex;gap:12px;justify-content:center;margin-top:28px;flex-wrap:wrap}
+  button,.btn{
+    border:0;border-radius:14px;padding:13px 18px;font-weight:800;cursor:pointer;
+    color:white;background:linear-gradient(135deg,var(--a),#4f7cff);
+    text-decoration:none;box-shadow:0 8px 30px rgba(80,70,255,.2)
+  }
+  .ghost{background:#151827;color:#d9dcf0;box-shadow:none}
+  section{padding:45px 0}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{
+    background:rgba(16,18,33,.78);border:1px solid #20243a;border-radius:22px;
+    padding:24px;transition:.25s;position:relative;overflow:hidden
+  }
+  .card:hover{transform:translateY(-5px);border-color:#424a70}
+  .emoji{font-size:28px}.card h3{margin:14px 0 8px}.card p{color:var(--muted);line-height:1.55;margin:0}
+  .quote{
+    text-align:center;border:1px solid #20243a;background:#0d0f1d;border-radius:28px;
+    padding:40px 20px;margin:25px 0 60px
+  }
+  .quote b{font-size:clamp(24px,5vw,42px);letter-spacing:-1.5px}
+  footer{border-top:1px solid #1c2033;padding:28px 0 45px;color:#6f758b;display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}
+  .toast{
+    position:fixed;left:50%;bottom:25px;transform:translate(-50%,20px);
+    background:#f5f7ff;color:#080914;padding:12px 17px;border-radius:999px;
+    font-weight:800;opacity:0;pointer-events:none;transition:.25s;z-index:5
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  @media(max-width:700px){.cards{grid-template-columns:1fr}.hero{min-height:67vh}h1{letter-spacing:-3px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand">nitin<span>nit</span><i class="dot">.in</i></div>
+    <div><a href="#stuff">stuff</a><a href="#about">why?</a></div>
+  </nav>
+
+  <main class="hero">
+    <div>
+      <div class="orb">N</div>
+      <h1>Nothing serious.<br><span class="grad">Probably.</span></h1>
+      <p class="tag">Games, experiments, questionable ideas, and things that seemed like a good idea at 2 AM.</p>
+      <div class="buttons">
+        <a class="btn" href="#stuff">Enter the timepass →</a>
+        <button class="ghost" onclick="surprise()">Press this. Trust me.</button>
+      </div>
+      <div class="tiny" id="tiny">No productivity was harmed in the making of this website.</div>
+    </div>
+  </main>
+
+  <section id="stuff">
+    <div class="cards">
+      <article class="card"><div class="emoji">🎮</div><h3>Games</h3><p>Play something. Break something. Blame the frame rate.</p></article>
+      <article class="card"><div class="emoji">🧪</div><h3>Experiments</h3><p>Small ideas with suspiciously large amounts of enthusiasm.</p></article>
+      <article class="card"><div class="emoji">🫠</div><h3>Timepass</h3><p>Technically not useful. Emotionally essential.</p></article>
+    </div>
+  </section>
+
+  <section id="about">
+    <div class="quote">
+      <b id="quote">“I was going to make something useful.”</b>
+      <p class="tiny">Then this happened.</p>
+      <button onclick="changeQuote()">Give me another excuse</button>
+    </div>
+  </section>
+
+  <footer>
+    <span>© 2026 nitinnit.in</span>
+    <span>PLAY. CREATE. TIMEPASS.</span>
+  </footer>
+</div>
+<div class="toast" id="toast">You have successfully wasted 3 seconds. 🎉</div>
+
+<script>
+const quotes = [
+  "“I was going to make something useful.”",
+  "“It worked on my machine.”",
+  "“One more game, then I’ll sleep.”",
+  "“This feature was absolutely necessary.”",
+  "“Future me can deal with it.”",
+  "“Wait... this is actually kinda cool.”"
+];
+let q=0;
+function changeQuote(){
+  q=(q+1)%quotes.length;
+  document.getElementById('quote').textContent=quotes[q];
+}
+function surprise(){
+  const t=document.getElementById('toast');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2200);
+  document.getElementById('tiny').textContent="Congratulations. You found the most important button on the site.";
+}
+</script>
+</body>
+</html>

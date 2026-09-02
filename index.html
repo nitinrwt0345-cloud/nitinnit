@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>nitinnit.in • Snake</title>
+<style>
+:root{--bg:#070812;--line:#252a43;--text:#f5f7ff;--muted:#969db5;--a:#8b5cf6;--b:#22a7ff;--pink:#ff4fba}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 15% 5%,#291653,transparent 30%),radial-gradient(circle at 90% 25%,#092d45,transparent 28%),var(--bg);color:var(--text);font-family:system-ui,sans-serif}.wrap{width:min(700px,92%);margin:auto}
+nav{display:flex;justify-content:space-between;padding:22px 0}.brand{font-weight:900;font-size:21px}.brand span{color:#9b72ff}.brand i{font-style:normal;color:#36b5ff}nav small{color:var(--muted)}
+header{text-align:center;padding:22px 0 15px}h1{font-size:clamp(42px,10vw,70px);letter-spacing:-4px;margin:0}header p{color:var(--muted)}
+.modes{display:flex;gap:8px;margin:0 auto 12px}.mode{flex:1;border:1px solid var(--line);border-radius:13px;padding:12px 8px;background:#101221;color:var(--muted);font-weight:800;cursor:pointer}.mode.active{background:linear-gradient(135deg,#291654,#102e45);color:#fff;border-color:#58618b}
+.game{background:#101221dd;border:1px solid var(--line);border-radius:25px;padding:14px;box-shadow:0 25px 80px #0006}.stats{display:grid;grid-template-columns:repeat(4,1fr);padding:4px 6px 13px;font-weight:800;text-align:center}.stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}.stats b{font-size:17px}
+canvas{display:block;width:100%;aspect-ratio:1;background:#090b15;border-radius:17px;touch-action:none}.controls{display:grid;grid-template-columns:repeat(3,62px);gap:8px;justify-content:center;margin:15px auto 4px}.controls button,.actions button{height:48px;border:1px solid #303650;border-radius:14px;background:#15182a;color:#fff;font-size:18px;font-weight:900;cursor:pointer}.controls button:active,.actions button:active,.start:active{transform:scale(.96)}.empty{visibility:hidden}.actions{display:flex;gap:8px;justify-content:center;margin-top:10px}.actions button{padding:0 18px;font-size:14px}.actions .primary,.start{background:linear-gradient(135deg,var(--a),var(--b));border:0}.note{text-align:center;color:#6f768e;font-size:12px;margin:12px 0 3px}
+.board{position:relative}.boardStart{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;border:0;border-radius:14px;padding:14px 24px;background:linear-gradient(135deg,var(--a),var(--b));color:#fff;font-weight:900;font-size:16px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;box-shadow:0 10px 35px #0008}.boardStart:active{transform:translate(-50%,-50%) scale(.96)}.countdown{position:absolute;inset:0;display:grid;place-items:center;z-index:10;pointer-events:none;background:#05061066}.countdown b{font-size:clamp(72px,20vw,120px);line-height:1;text-shadow:0 8px 35px #000;font-weight:950}.hidden{display:none!important}</style>
+</head>
+<body>
+<div class="wrap">
+<nav><div class="brand">nitin<span>nit</span><i>.in</i></div><small>PLAY. CREATE. TIMEPASS.</small></nav>
+<header><h1>🐍 Snake</h1><p>Eat the dots. Don't eat yourself. Simple life.</p></header>
+
+<div class="modes">
+<button class="mode active" id="wrapBtn" type="button">🌀 Wrap Mode<br><small>Walls don't exist</small></button>
+<button class="mode" id="wallBtn" type="button">🧱 Classic<br><small>Walls hurt</small></button>
+</div>
+
+<div class="game">
+<div class="stats"><div><span>Score</span><b id="score">0</b></div><div><span>Best</span><b id="best">0</b></div><div><span>Level</span><b id="level">1</b></div><div><span>Speed</span><b id="speed">1.0×</b></div></div>
+<div class="board"><canvas id="c" width="600" height="600"></canvas><div class="countdown hidden" id="countdown"><b id="countdownText">3</b></div><button class="boardStart" id="boardStart" type="button">▶ Start game</button></div>
+<div class="controls">
+<button class="empty" type="button"></button><button type="button" data-dir="up">↑</button><button class="empty" type="button"></button>
+<button type="button" data-dir="left">←</button><button type="button" data-dir="down">↓</button><button type="button" data-dir="right">→</button>
+</div>
+<div class="actions"><button id="pauseAction" type="button">Ⅱ Pause</button><button id="endAction" type="button">■ End Game</button><button id="restartAction" type="button">↻ Restart</button></div>
+<div class="note">Arrow keys / WASD · swipe on mobile · Pause keeps your run safe</div>
+</div>
+<footer>Every 5 apples = a new level. High score is saved on this device.</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+const c=document.getElementById('c');
+const ctx=c.getContext('2d');
+const S=30;
+const z=c.width/S;
+
+const scoreEl=document.getElementById('score');
+const bestEl=document.getElementById('best');
+const levelEl=document.getElementById('level');
+const speedEl=document.getElementById('speed');
+const wrapBtn=document.getElementById('wrapBtn');
+const wallBtn=document.getElementById('wallBtn');
+const countdownEl=document.getElementById('countdown');
+const countdownText=document.getElementById('countdownText');
+
+let snake=[],food=null,dir={x:1,y:0},next={x:1,y:0};
+let score=0,level=1,best=0;
+let running=false,paused=false,counting=false,timer=null,countdownTimer=null,wrap=true;
+
+try{best=Number(localStorage.getItem('nitinnitSnakeBest')||0)}catch(e){}
+bestEl.textContent=best;
+
+function chooseMode(w){
+  if(running||counting)return;
+  wrap=w;
+  wrapBtn.classList.toggle('active',w);
+  wallBtn.classList.toggle('active',!w);
+  hint.textContent=w?'🌀 Wrap Mode: leave one side, appear on the other.':'🧱 Classic: touching a wall ends the run.';
+}
+
+function reset(){
+  snake=[{x:15,y:15},{x:14,y:15},{x:13,y:15}];
+  dir={x:1,y:0};
+  next={x:1,y:0};
+  score=0;
+  level=1;
+  paused=false;
+  updateStats();
+  foodAt();
+  draw();
+}
+
+function foodAt(){
+  do{food={x:Math.floor(Math.random()*S),y:Math.floor(Math.random()*S)}}
+  while(snake.some(q=>q.x===food.x&&q.y===food.y));
+}
+
+function move(a,b){
+  if(!running||paused||counting)return;
+  if(a!==-dir.x||b!==-dir.y)next={x:a,y:b};
+}
+
+function interval(){return Math.max(70,165-(level-1)*5)}
+
+function updateStats(){
+  scoreEl.textContent=score;
+  levelEl.textContent=level;
+  speedEl.textContent=(165/interval()).toFixed(1)+'×';
+}
+
+function startGame(){
+  if(running||counting)return;
+  clearTimeout(countdownTimer);
+  reset();
+  counting=true;
+  paused=false;
+  boardStart.classList.add('hidden');
+  countdownEl.classList.remove('hidden');
+  countdown(3);
+}
+
+function countdown(n){
+  if(!counting)return;
+  if(n>0){
+    countdownText.textContent=n;
+    countdownEl.classList.remove('hidden');
+    countdownTimer=setTimeout(function(){countdown(n-1)},700);
+  }else{
+    countdownTimer=null;
+    countdownEl.classList.add('hidden');
+    counting=false;
+    running=true;
+    paused=false;
+    clearInterval(timer);
+    timer=setInterval(tick,interval());
+  }
+}
+
+function pause(){
+  if(!running)return;
+  paused=!paused;
+  if(paused){
+    clearInterval(timer);
+    countdownText.textContent='Ⅱ';
+    countdownEl.classList.remove('hidden');
+  }else{
+    countdownEl.classList.add('hidden');
+    clearInterval(timer);
+    timer=setInterval(tick,interval());
+  }
+}
+
+function restart(){
+  clearInterval(timer);
+  clearTimeout(countdownTimer);
+  timer=null;
+  countdownTimer=null;
+  running=false;
+  counting=false;
+  paused=false;
+  countdownEl.classList.add('hidden');
+  reset();
+  startGame();
+}
+
+function endGame(){
+  clearInterval(timer);
+  clearTimeout(countdownTimer);
+  timer=null;
+  countdownTimer=null;
+  running=false;
+  counting=false;
+  paused=false;
+  countdownEl.classList.add('hidden');
+  boardStart.classList.remove('hidden');
+  boardStart.textContent='▶ Start game';
+  reset();
+}
+
+function over(){
+  running=false;
+  paused=false;
+  clearInterval(timer);
+  const nb=score>best;
+  if(nb){
+    best=score;
+    try{localStorage.setItem('nitinnitSnakeBest',String(best))}catch(e){}
+    bestEl.textContent=best;
+  }
+  countdownText.textContent=nb&&score?'🏆':'GAME OVER';
+  countdownEl.classList.remove('hidden');
+  setTimeout(function(){
+    countdownEl.classList.add('hidden');
+    boardStart.classList.remove('hidden');
+    boardStart.textContent='▶ Play again';
+  },900);
+}
+
+function tick(){
+  dir=next;
+  const h={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
+
+  if(wrap){
+    h.x=(h.x+S)%S;
+    h.y=(h.y+S)%S;
+  }else if(h.x<0||h.x>=S||h.y<0||h.y>=S){
+    over();return;
+  }
+
+  if(snake.slice(0,-1).some(q=>q.x===h.x&&q.y===h.y)){
+    over();return;
+  }
+
+  snake.unshift(h);
+
+  if(h.x===food.x&&h.y===food.y){
+    score++;
+    const old=level;
+    level=Math.floor(score/5)+1;
+    updateStats();
+    foodAt();
+    if(level!==old){
+      clearInterval(timer);
+      timer=setInterval(tick,interval());
+    }
+  }else{
+    snake.pop();
+  }
+  draw();
+}
+
+function draw(){
+  ctx.fillStyle='#090b15';
+  ctx.fillRect(0,0,c.width,c.height);
+
+  ctx.strokeStyle='#111526';
+  ctx.lineWidth=1;
+  for(let i=1;i<S;i++){
+    ctx.beginPath();ctx.moveTo(i*z,0);ctx.lineTo(i*z,c.height);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,i*z);ctx.lineTo(c.width,i*z);ctx.stroke();
+  }
+
+  if(food){
+    ctx.fillStyle='#ff4fba';
+    ctx.beginPath();
+    ctx.arc(food.x*z+z/2,food.y*z+z/2,z*.28,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  snake.forEach(function(q,i){
+    ctx.fillStyle=i?'#7c3cff':'#b58aff';
+    ctx.fillRect(q.x*z+2,q.y*z+2,z-4,z-4);
+  });
+}
+
+wrapBtn.onclick=function(){chooseMode(true)};
+wallBtn.onclick=function(){chooseMode(false)};
+boardStart.onclick=startGame;
+document.getElementById('pauseAction').onclick=function(){
+  pause();
+  this.textContent=paused?'▶ Resume':'Ⅱ Pause';
+};
+document.getElementById('endAction').onclick=endGame;
+document.getElementById('restartAction').onclick=function(){restart();document.getElementById('pauseAction').textContent='Ⅱ Pause';};
+
+document.querySelectorAll('[data-dir]').forEach(function(b){
+  const map={up:[0,-1],left:[-1,0],down:[0,1],right:[1,0]};
+  b.onclick=function(){move.apply(null,map[b.dataset.dir])};
+});
+
+document.addEventListener('keydown',function(e){
+  const m={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]}[e.key];
+  if(m){e.preventDefault();move(m[0],m[1])}
+  if((e.key===' '||e.key==='p')&&running)pause();
+});
+
+let ts=null;
+c.addEventListener('touchstart',function(e){
+  const t=e.changedTouches[0];ts=[t.clientX,t.clientY];
+},{passive:true});
+
+c.addEventListener('touchend',function(e){
+  if(!ts)return;
+  const t=e.changedTouches[0],dx=t.clientX-ts[0],dy=t.clientY-ts[1];
+  if(Math.max(Math.abs(dx),Math.abs(dy))>25){
+    move(Math.abs(dx)>Math.abs(dy)?Math.sign(dx):0,Math.abs(dy)>Math.abs(dx)?Math.sign(dy):0);
+  }
+  ts=null;
+},{passive:true});
+
+reset();
+})();
+</script>
+</body>
+</html>

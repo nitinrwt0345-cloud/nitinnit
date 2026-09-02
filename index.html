@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>nitinnit.in • Snake</title>
+<style>
+:root{--bg:#070812;--line:#252a43;--text:#f5f7ff;--muted:#969db5;--a:#8b5cf6;--b:#22a7ff;--pink:#ff4fba}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 15% 5%,#291653,transparent 30%),radial-gradient(circle at 90% 25%,#092d45,transparent 28%),var(--bg);color:var(--text);font-family:system-ui,sans-serif}.wrap{width:min(700px,92%);margin:auto}
+nav{display:flex;justify-content:space-between;padding:22px 0}.brand{font-weight:900;font-size:21px}.brand span{color:#9b72ff}.brand i{font-style:normal;color:#36b5ff}nav small{color:var(--muted)}
+header{text-align:center;padding:22px 0 15px}h1{font-size:clamp(42px,10vw,70px);letter-spacing:-4px;margin:0}header p{color:var(--muted)}
+.modes{display:flex;gap:8px;margin:0 auto 12px}.mode{flex:1;border:1px solid var(--line);border-radius:13px;padding:12px 8px;background:#101221;color:var(--muted);font-weight:800;cursor:pointer}.mode.active{background:linear-gradient(135deg,#291654,#102e45);color:#fff;border-color:#58618b}
+.game{background:#101221dd;border:1px solid var(--line);border-radius:25px;padding:14px;box-shadow:0 25px 80px #0006}.stats{display:grid;grid-template-columns:repeat(4,1fr);padding:4px 6px 13px;font-weight:800;text-align:center}.stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}.stats b{font-size:17px}
+canvas{display:block;width:100%;aspect-ratio:1;background:#090b15;border-radius:17px;touch-action:none}.controls{display:grid;grid-template-columns:repeat(3,62px);gap:8px;justify-content:center;margin:15px auto 4px}.controls button,.actions button{height:48px;border:1px solid #303650;border-radius:14px;background:#15182a;color:#fff;font-size:18px;font-weight:900;cursor:pointer}.controls button:active,.actions button:active{transform:scale(.94)}.empty{visibility:hidden}.actions{display:flex;gap:8px;justify-content:center;margin-top:10px}.actions button{padding:0 18px;font-size:14px}.actions .primary{background:linear-gradient(135deg,var(--a),var(--b));border:0}.note{text-align:center;color:#6f768e;font-size:12px;margin:12px 0 3px}
+.overlay{position:fixed;inset:0;background:#050610cc;display:grid;place-items:center;padding:20px;z-index:5}.modal{width:min(410px,100%);background:#111426;border:1px solid #303653;border-radius:24px;padding:28px;text-align:center}.modal h2{font-size:30px;margin:0 0 6px}.modal p{color:var(--muted);margin:0 0 20px}.start{border:0;border-radius:14px;padding:14px 24px;background:linear-gradient(135deg,var(--a),var(--b));color:#fff;font-weight:900;font-size:16px}.hidden{display:none}.modehint{font-size:12px;color:#777f99;margin-top:12px}
+footer{text-align:center;color:#626980;font-size:12px;padding:25px 0 35px}
+@media(max-width:450px){.game{padding:10px}.controls{grid-template-columns:repeat(3,58px)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav><div class="brand">nitin<span>nit</span><i>.in</i></div><small>PLAY. CREATE. TIMEPASS.</small></nav>
+<header><h1>🐍 Snake</h1><p>Eat the dots. Don't eat yourself. Simple life.</p></header>
+<div class="modes">
+<button class="mode active" id="wrapBtn">🌀 Wrap Mode<br><small>Walls don't exist</small></button>
+<button class="mode" id="wallBtn">🧱 Classic<br><small>Walls hurt</small></button>
+</div>
+<div class="game">
+<div class="stats"><div><span>Score</span><b id="score">0</b></div><div><span>Best</span><b id="best">0</b></div><div><span>Level</span><b id="level">1</b></div><div><span>Speed</span><b id="speed">1.0×</b></div></div>
+<canvas id="c" width="600" height="600"></canvas>
+<div class="controls"><button class="empty"></button><button>↑</button><button class="empty"></button><button>←</button><button>↓</button><button>→</button></div>
+<div class="actions"><button class="primary">▶ Start</button><button>Ⅱ Pause</button><button>↻ Restart</button></div>
+<div class="note">Arrow keys / WASD · swipe on mobile · Pause keeps your run safe</div>
+</div>
+<footer>Every 5 apples = a new level. High score is saved on this device.</footer>
+</div>
+<div class="overlay" id="o"><div class="modal"><h2 id="title">Ready?</h2><p id="msg">Choose your rules, then try not to become snake soup.</p><button class="start" id="startBtn" type="button">Start game</button><div class="modehint" id="hint">🌀 Wrap Mode: leave one side, appear on the other.</div></div></div>
+
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d'),S=30,z=c.width/S;
+window.addEventListener('error',e=>console.error('Snake error:',e.error||e.message));
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),levelEl=document.getElementById('level'),speedEl=document.getElementById('speed');
+const wrapBtn=document.getElementById('wrapBtn'),wallBtn=document.getElementById('wallBtn'),overlay=document.getElementById('o'),title=document.getElementById('title'),msg=document.getElementById('msg'),startBtn=document.getElementById('startBtn'),hint=document.getElementById('hint');
+let snake,food,dir,next,score,level,running=false,paused=false,timer,wrap=true,counting=false;
+let best=0;
+try{best=+(localStorage.getItem('nitinnitSnakeBest')||0)}catch(e){}
+bestEl.textContent=best;
+
+function chooseMode(w){
+ if(running||counting)return;
+ wrap=w;wrapBtn.classList.toggle('active',w);wallBtn.classList.toggle('active',!w);
+ hint.textContent=w?'🌀 Wrap Mode: leave one side, appear on the other.':'🧱 Classic: touching a wall ends the run.';
+}
+function reset(){snake=[{x:15,y:15},{x:14,y:15},{x:13,y:15}];dir={x:1,y:0};next={x:1,y:0};score=0;level=1;paused=false;updateStats();foodAt();draw()}
+function foodAt(){do{food={x:Math.floor(Math.random()*S),y:Math.floor(Math.random()*S)}}while(snake.some(q=>q.x===food.x&&q.y===food.y))}
+function move(a,b){if(!running||paused||counting)return;if(a!==-dir.x||b!==-dir.y)next={x:a,y:b}}
+function interval(){return 165-(level-1)*5}
+function updateStats(){scoreEl.textContent=score;levelEl.textContent=level;speedEl.textContent=(165/interval()).toFixed(1)+'×'}
+function start(){
+ if(running||counting)return;
+ reset();counting=true;overlay.classList.remove('hidden');countdown(3);
+}
+function countdown(n){
+ if(n>0){overlay.classList.remove('hidden');title.textContent=n;msg.textContent='Get ready...';startBtn.style.display='none';hint.textContent=wrap?'🌀 Wrap Mode':'🧱 Classic';setTimeout(()=>countdown(n-1),700)}
+ else {overlay.classList.add('hidden');startBtn.style.display='inline-block';counting=false;running=true;paused=false;clearInterval(timer);timer=setInterval(tick,interval())}
+}
+function pause(){
+ if(!running)return;
+ paused=!paused;
+ if(paused){clearInterval(timer);title.textContent='Paused';msg.textContent='Take your time. The snake isn't going anywhere.';startBtn.textContent='Resume';overlay.classList.remove('hidden')}
+ else{overlay.classList.add('hidden');startBtn.textContent='Start game';timer=setInterval(tick,interval())}
+}
+function restart(){clearInterval(timer);running=false;counting=false;paused=false;startBtn.textContent='Start game';reset();start()}
+function over(){
+ running=false;paused=false;clearInterval(timer);let nb=score>best;if(nb){best=score;try{localStorage.setItem('nitinnitSnakeBest',best)}catch(e){}bestEl.textContent=best}
+ title.textContent=nb&&score?'NEW HIGH SCORE!':'Game over';msg.textContent=score?`Score ${score} · Level ${level}. ${nb?'Imaginary trophy unlocked.':'The snake remembers.'}`:'The snake barely had time to regret anything.';
+ startBtn.textContent='Play again';startBtn.style.display='inline-block';overlay.classList.remove('hidden');
+}
+function tick(){
+ dir=next;let h={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
+ if(wrap){h.x=(h.x+S)%S;h.y=(h.y+S)%S}else if(h.x<0||h.x>=S||h.y<0||h.y>=S)return over();
+ if(snake.slice(0,-1).some(q=>q.x===h.x&&q.y===h.y))return over();
+ snake.unshift(h);
+ if(h.x===food.x&&h.y===food.y){score++;let old=level;level=Math.floor(score/5)+1;updateStats();foodAt();if(level!==old){clearInterval(timer);timer=setInterval(tick,interval())}}else snake.pop();
+ draw();
+}
+function draw(){
+ x.fillStyle='#090b15';x.fillRect(0,0,c.width,c.height);x.strokeStyle='#111526';x.lineWidth=1;
+ for(let i=1;i<S;i++){x.beginPath();x.moveTo(i*z,0);x.lineTo(i*z,c.height);x.stroke();x.beginPath();x.moveTo(0,i*z);x.lineTo(c.width,i*z);x.stroke()}
+ x.fillStyle='#ff4fba';x.beginPath();x.arc(food.x*z+z/2,food.y*z+z/2,z*.28,0,7);x.fill();
+ snake.forEach((q,i)=>{let g=x.createLinearGradient(q.x*z,q.y*z,q.x*z+z,q.y*z+z);g.addColorStop(0,i?'#7c3cff':'#b58aff');g.addColorStop(1,'#20aaff');x.fillStyle=g;x.beginPath();
+  let px=q.x*z+2,py=q.y*z+2,pw=z-4,ph=z-4,r=Math.min(6,pw/2,ph/2);
+  if(x.roundRect){x.roundRect(px,py,pw,ph,r)}else{x.rect(px,py,pw,ph)}
+  x.fill()})
+}
+document.addEventListener('keydown',e=>{let m={ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1],ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0]}[e.key];if(m){e.preventDefault();move(...m)}if((e.key===' '||e.key==='p')&&running)pause()});
+let ts;c.addEventListener('touchstart',e=>{let t=e.changedTouches[0];ts=[t.clientX,t.clientY]},{passive:true});
+c.addEventListener('touchend',e=>{if(!ts)return;let t=e.changedTouches[0],dx=t.clientX-ts[0],dy=t.clientY-ts[1];if(Math.max(Math.abs(dx),Math.abs(dy))>25)move(Math.abs(dx)>Math.abs(dy)?Math.sign(dx):0,Math.abs(dy)>Math.abs(dx)?Math.sign(dy):0);ts=null},{passive:true});
+// Explicit button wiring. This avoids relying on inline onclick handlers.
+startBtn.addEventListener('click',start);
+wrapBtn.addEventListener('click',()=>chooseMode(true));
+wallBtn.addEventListener('click',()=>chooseMode(false));
+document.querySelectorAll('.controls button:not(.empty)').forEach((b,i)=>{
+  const dirs=[[0,-1],[-1,0],[0,1],[1,0]];
+  b.addEventListener('click',()=>move(...dirs[i]));
+});
+document.querySelector('.actions .primary').addEventListener('click',start);
+document.querySelector('.actions button:nth-child(2)').addEventListener('click',pause);
+document.querySelector('.actions button:nth-child(3)').addEventListener('click',restart);
+
+reset();
+</script></body></html>

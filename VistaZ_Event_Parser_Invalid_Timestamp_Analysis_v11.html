@@ -1,0 +1,578 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VistaZ — Event Parser</title><style>
+*{box-sizing:border-box}body{font-family:Segoe UI,Arial;background:#0f1117;color:#e2e8f0;padding:24px}h1{color:#7dd3fc;font-size:1.4rem}.subtitle{color:#64748b;font-size:.8rem;margin:4px 0 20px}.input-area,.analysis-wrap{background:#1e2230;border:1px solid #2d3748;border-radius:8px;padding:16px;margin-bottom:14px}textarea{width:100%;height:100px;background:#0f1117;color:#f1f5f9;border:1px solid #2d3748;border-radius:6px;padding:10px;font-family:Consolas;resize:vertical}.btn-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}button{padding:8px 20px;border:0;border-radius:6px;cursor:pointer;font-weight:600}.btn-parse{background:#3b82f6;color:white}.btn-sample{background:#064e3b;color:#6ee7b7}.btn-clear{background:#374151;color:#9ca3af}.error{color:#f87171;background:#1f1315;border:1px solid #7f1d1d;padding:10px;margin-bottom:12px;border-radius:6px}.summary{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}.sum-chip{background:#1e2230;border:1px solid #2d3748;border-radius:20px;padding:4px 14px;font-size:.78rem;color:#94a3b8}.sum-chip span{color:#7dd3fc;font-weight:700}.analysis-title{color:#7dd3fc;font-weight:700}.analysis-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.btn-copy{background:#1e2230;color:#7dd3fc;border:2px solid #0284c7;padding:5px 28px;font-size:.85rem}.btn-copy:hover{background:#263044}.copy-status{color:#86efac;font-size:.75rem;font-weight:600;margin-left:8px}.timestamp-toggle{cursor:pointer;color:#7dd3fc}.timestamp-details{display:none;margin-top:7px;padding-left:14px}.timestamp-detail-row{font:12px Consolas;color:#cbd5e1;margin:3px 0}.analysis-grid{display:grid;grid-template-columns:max-content 1fr;gap:7px 14px;font-size:.82rem}.analysis-label{color:#94a3b8}.final-result{margin-top:12px;padding-top:10px;border-top:1px solid #2d3748;color:#fbbf24;font-weight:700}.gsm-toggle{cursor:pointer;color:#7dd3fc}.gsm-details{display:none;margin-top:7px;padding-left:14px}.gsm-detail-row{font:12px Consolas;color:#cbd5e1;margin:3px 0}.table-wrap{overflow:auto;border:1px solid #2d3748;border-radius:8px}table{width:100%;border-collapse:collapse;font-size:.8rem}th{padding:10px;text-align:left;color:#7dd3fc;background:#1a1f2e;white-space:nowrap}td{padding:8px;vertical-align:top;border-bottom:1px solid #1e2230}.mono{font-family:Consolas}.detail-grid{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px}.dk{color:#64748b;font-size:.75rem}.dv{font:12px Consolas;color:#e2e8f0}.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:600}.badge-health{background:#14532d;color:#86efac}.badge-diag{background:#422006;color:#fde68a}.badge-gsm{background:#064e3b;color:#6ee7b7}.badge-door{background:#7c2d12;color:#fdba74}.badge-image{background:#0c4a6e;color:#7dd3fc}.badge-dfu{background:#4a1d96;color:#ddd6fe}.badge-command{background:#1e3a5f;color:#7dd3fc}.badge-sensor{background:#3b1d6e;color:#c4b5fd}.badge-devmove{background:#3d2a00;color:#fbbf24}.badge-motion{background:#1e3a5f;color:#93c5fd}.badge-exception{background:#4c0519;color:#fda4af}.badge-esp,.badge-apm{background:#1c1917;color:#fcd34d}.badge-geo{background:#082f49;color:#7dd3fc}.badge-slave{background:#312e81;color:#a5b4fc}.badge-unknown{background:#1f2937;color:#6b7280}.door-open{color:#f87171}.door-closed{color:#6b7280}
+</style></head><body>
+<h1>VistaZ — Event Parser</h1><p class="subtitle">Paste raw hex event data (space/newline separated). Each transport event = 15 bytes. Supports legacy and extended Sensor records with battery-drop flags, plus legacy/earlier extended Health telemetry (maximum voltage 5500 mV). New firmware carries battery flags in the Sensor Event; raw voltages are not in that packet. Raw 16-byte flash records are not supported.</p>
+<div class="input-area"><textarea id="hexInput" placeholder="e.g. 4F 17 0B 71 58 7E 69 35 10 00 00 00 04 10 B0 ..."></textarea><input type="file" id="binFile" accept=".bin" style="display:none" onchange="loadBinFile(event)"><div class="btn-row"><button class="btn-parse" onclick="parse()">Parse Events</button><button class="btn-sample" onclick="binFile.click()">Load BIN File</button><button class="btn-sample" onclick="loadSample()">Load Sample</button><button class="btn-clear" onclick="clearAll()">Clear</button></div></div>
+<div id="error" class="error" style="display:none"></div><div id="summary" class="summary" style="display:none"></div><div id="analysis"></div><div id="output"></div>
+<script>
+let inputMode='hex';
+let binBytes=null;
+window.lastAnalysisText='';
+const EVENT_TYPE={1:'THA_SENSOR',2:'DOOR',3:'HEALTH',4:'DEVICE_MOVEMENT',5:'DIAGNOSTICS',6:'IMAGE',7:'ESP',8:'MOTION',9:'EXCEPTION',10:'DFU',11:'GSM',12:'COMMAND',13:'GEOLOCATION',14:'SLAVE',16:'APM'};
+const REBOOT_CAUSE={0:'PIN_RESET',1:'WDT_RESET',2:'SOFT_RESET',3:'CPU_LOCK_RESET',4:'RESET_READ_FAILURE',5:'DFU_RESET',6:'POWER_ON_RESET',7:'POWER_FAILURE_WARNING'};
+const DIAG_ID={0:'REBOOT_DIAG_ID',1:'BATTERY_CRITICAL_DIAG_ID',2:'SYSTEM_CRITICAL_ERROR_ID',5:'ESP_DHCP_DORA_EVENT_ID',6:'CALIBRATION_DIAG_ID'};
+const TASK_ID={0:'MPU9250_WOM_TASK',1:'IDLE_TASK',2:'MPU9250_DATA_TASK',3:'NOTIFY_TASK',4:'SENSOR_TASK',5:'UPGRADE_TASK',6:'BLE_DISCONNECT_TASK',7:'EVENT_DATA_TASK',8:'CONFIG_DATA_TASK',9:'HEALTH_CHECK_TASK',10:'INSTALL_DEVICE_TASK',11:'CALIBRATION_TASK',12:'SET_RESET_PASS_TASK',13:'DEBUG_INFO_TASK',14:'ADVERTISEMENT_DATA_UPDATE_TASK',15:'DEBUG_DATA_NOTIFY_TASK',16:'MEMORY_READ_NOTIFY_TASK',17:'DUMMY_TASK',18:'CAMERA_TASK',19:'CAMERA_TIMER_TASK',20:'FPGA_UPGRADE_TASK',21:'ESP_READ_TASK',24:'GSM_TASK',25:'SERVER_COMMAND_HANDLER_TASK'};
+const DFU_DEVICE={0:'BLE',1:'CELLULAR',2:'WIFI',3:'SLAVE_DFU',4:'GSM_MODULE'},DFU_STATUS={240:'SUCCESS',241:'FAIL'};
+const BADGE_CLASS={THA_SENSOR:'badge-sensor',DOOR:'badge-door',HEALTH:'badge-health',DEVICE_MOVEMENT:'badge-devmove',DIAGNOSTICS:'badge-diag',IMAGE:'badge-image',ESP:'badge-esp',MOTION:'badge-motion',EXCEPTION:'badge-exception',DFU:'badge-dfu',GSM:'badge-gsm',COMMAND:'badge-command',GEOLOCATION:'badge-geo',SLAVE:'badge-slave',APM:'badge-apm',UNKNOWN:'badge-unknown'};
+const GSM_ERROR_CODES={0:'GSM FILE UPLOAD SUCCESS',1:'GSM ACTIVE ERROR',2:'GSM NETWORK ERROR',3:'GSM SERVER CONNECTION ERROR',4:'GSM FILE DATA SENDING TIMEOUT ERROR',5:'GSM DATA RECV ERROR',6:'GSM UART ERROR',7:'GSM SLEEP',8:'GSM UART RESPONSE TIMEOUT',9:'GSM IMAGE DATA READ ERROR',10:'GSM NORMAL POWER OFF',11:'GSM FORCEFULLY POWER OFF ERROR FROM HTTP PROCESS FSM',12:'GSM FORCEFULLY POWER OFF ERROR FROM ESP DFU PROCESS FSM',13:'GSM FORCEFULLY POWER OFF ERROR FROM NRF DFU PROCESS FSM',14:'GSM SERVER DISCONNECTED',15:'GSM UNKNOW ERROR',16:'GSM HTTP OK 200',17:'GSM HTTP FORBIDDEN 403',18:'GSM HTTP NOT FOUND 404',19:'GSM HTTP CONFLICT 409',20:'GSM HTTP LENGTH REQUIRED 411',21:'GSM HTTP INTERNAL SERVER ERROR 500',22:'GSM SIM FAILURE',23:'GSM SIM CHANGE',24:'GSM IP ASSIGNED',25:'GSM HTTP UNKNOWN ERROR',26:'GSM HTTP TIMEOUT',27:'GSM HTTP BUSY',28:'GSM HTTP UART BUSY',29:'GSM HTTP NETWORK BUSY',30:'GSM HTTP NETWORK OPEN FAILED',31:'GSM HTTP NETWORK NO CONFIGURATION',32:'GSM HTTP NETWORK DEACTIVATED',33:'GSM HTTP NETWORK ERROR',34:'GSM HTTP URL ERROR',35:'GSM HTTP EMPTY URL',36:'GSM HTTP IP ADDRESS ERROR',37:'GSM HTTP DNS ERROR',38:'GSM HTTP SOCKET CREATE ERROR',39:'GSM HTTP SOCKET CONNECT ERROR',40:'GSM HTTP SOCKET READ ERROR',41:'GSM HTTP SOCKET WRITE ERROR',42:'GSM HTTP SOCKET CLOSED',43:'GSM HTTP DATA ENCODE ERROR',44:'GSM HTTP DATA DECODE ERROR',45:'GSM HTTP READ TIMEOUT',46:'GSM HTTP RESPONSE FAILED',47:'GSM INPUT TIMEOUT',48:'GSM WAIT DATA TIMEOUT',49:'GSM WAIT HTTP RESPONSE TIMEOUT',50:'GSM MEMORY ALLOCATION FAILED',51:'GSM INVALID PARAMETER',52:'INITIAL_SETUP_DONE',53:'GSM_FILE_SENDED_TO_UART',54:'GSM_NETWORK_RETRY',55:'GSM FILE DOWNLOAD SUCCESS',56:'GSM FILE DOWNLOAD FAILED',57:'GSM_TEST_EVENT',58:'GSM_TEST_ERROR',59:'PARTIAL_IMAGE_FROM SERVER',60:'GSM_FORCEFULLY_POWER_OFF_ERROR_FROM_GSM_FOTA_PROCESS_FSM'};
+const NETWORK_TYPES={0:'NO_SERVICE',1:'GSM',2:'GPRS',3:'EDGE',4:'eMTC',5:'NBIoT'};
+const u16=(b,o)=>b[o]|b[o+1]<<8,u32=(b,o)=>(b[o]|b[o+1]<<8|b[o+2]<<16|b[o+3]<<24)>>>0,i16=(b,o)=>{let v=u16(b,o);return v>=32768?v-65536:v},hx=(v,p=2)=>v.toString(16).toUpperCase().padStart(p,'0'),hxB=b=>Array.from(b).map(x=>hx(x)).join(' '),named=(m,v,f)=>m[v]!==undefined?`${m[v]} (${v})`:`${f} (${v})`,epoch=e=>new Date(e*1000).toISOString().replace('T',' ').replace('.000Z',' UTC');
+function parseSensorSlot(slot) {
+  if (!(slot instanceof Uint8Array) || slot.length !== 15)
+    throw new Error("Expected one 15-byte slot");
+  const view = new DataView(slot.buffer, slot.byteOffset, slot.byteLength);
+  const header = slot[2];
+  if ((header & 0x1F) !== 1) throw new Error("Not a Sensor Event");
+  const extended = !!(slot[12] & 0x80);
+  const length = extended ? 13 : 12;
+  let sum = 0;
+  for (let i = 2; i < 2 + length; i++) sum += slot[i];
+  if (sum & 0xFF) throw new Error("Invalid checksum");
+  const flags = extended ? slot[13] : 0;
+  if (extended && !(flags & 0x80)) throw new Error("Unsupported Sensor format");
+  const currentValid = extended ? !!(flags & 0x20) : null;
+  const previousValid = extended ? !!(flags & 0x10) : null;
+  const batteryDrop = extended ? !!(flags & 0x08) : null;
+  const percentage = slot[12] & 0x7F;
+  if (percentage > 100) throw new Error("Invalid percentage");
+  if (batteryDrop && (!currentValid || !previousValid))
+    throw new Error("Inconsistent battery drop");
+  const gsmOn = !!(header & 0x20);
+  if (extended && gsmOn !== !!(flags & 1))
+    throw new Error("Inconsistent GSM state");
+  return {
+    eventNumber: view.getUint16(0, true),
+    timestampSeconds: view.getUint32(3, true),
+    formatVersion: extended ? 1 : 0,
+    doorClosed: !!(header & 0x80), newParsingFlag: !!(header & 0x40),
+    temperatureRaw: view.getInt16(7, true), humidity: slot[9],
+    ambientLight: view.getUint16(10, true),
+    batteryPercent: extended && !currentValid ? null : percentage,
+    currentValid, previousValid, batteryDrop, gsmOn,
+    cameraOn: extended ? !!(flags & 2) : null,
+    espOn: extended ? !!(flags & 4) : null,
+    partialPower: extended ? !!(flags & 0x40) : null
+  };
+}
+
+function parseSensor(p, sensor) {
+  const extended=sensor.formatVersion===1;
+  const state=v=>v===null?'Unavailable':v?'ON':'OFF';
+  const valid=v=>v===null?'Unavailable':v?'Valid':'Invalid / no baseline';
+  return [
+    ['Sensor Format',extended?'Extended v1 (battery flags)':'Legacy'],
+    ['Temperature',`${(sensor.temperatureRaw/10).toFixed(1)} °C`],
+    ['Humidity',`${sensor.humidity} %`],
+    ['Ambient Light',`${sensor.ambientLight} lux`],
+    ['Battery %',sensor.batteryPercent===null?'Unavailable':`${sensor.batteryPercent} %`],
+    ['Battery Voltage Drop',sensor.batteryDrop===null?'Unavailable':sensor.batteryDrop?'ALERT (firmware threshold reached)':'No'],
+    ['Current Reading',valid(sensor.currentValid)],
+    ['Previous Reading',valid(sensor.previousValid)],
+    ['GSM (commanded)',state(sensor.gsmOn)],
+    ['Camera (commanded)',state(sensor.cameraOn)],
+    ['ESP (commanded)',state(sensor.espOn)],
+    ['Partial Power',sensor.partialPower===null?'Unavailable':sensor.partialPower?'WARNING: inconsistent supply enables':'No'],
+    ['Voltage / Drop %','Not carried in Sensor packet'],
+    ['Raw Status',extended?`0x${hx(p[6])}`:'Unavailable'],
+    ['Additive Checksum',`Valid (0x${hx(p[extended?7:6])})`]
+  ];
+}
+function parseHealthSlot(slot, maxMv = 5500) {
+  if (!(slot instanceof Uint8Array) || slot.length !== 15)
+    throw new Error("Expected one 15-byte event slot");
+  const view = new DataView(slot.buffer, slot.byteOffset, slot.byteLength);
+  const eventNumber = view.getUint16(0, true);
+  const header = slot[2];
+  if ((header & 0x1F) !== 3) throw new Error("Not a Health Event");
+  const extended = !!(header & 0x20);
+  const recordLength = extended ? 13 : 10;
+  let sum = 0;
+  for (let i = 2; i < 2 + recordLength; i++) sum += slot[i];
+  if ((sum & 0xFF) !== 0) throw new Error("Invalid Health checksum");
+  const rawCurrent = view.getInt16(7, true);
+  const flags = extended ? slot[13] : 0;
+  if (extended && !(flags & 0x80)) throw new Error("Unsupported Health format");
+  const rawPrevious = extended ? view.getUint16(11, true) : 0;
+  const inRange = mv => mv > 0 && mv <= maxMv;
+  const currentValid = extended ? !!(flags & 0x20) : inRange(rawCurrent);
+  const previousValid = extended && !!(flags & 0x10);
+  if ((currentValid && !inRange(rawCurrent)) ||
+      (previousValid && !inRange(rawPrevious)))
+    throw new Error("Health validity flags conflict with voltage range");
+  if (currentValid && slot[9] > 100) throw new Error("Invalid battery percentage");
+  const batteryDrop = extended ? !!(flags & 0x08) : null;
+  if (batteryDrop && (!currentValid || !previousValid || rawCurrent >= rawPrevious))
+    throw new Error("Inconsistent battery-drop record");
+  const comparable = currentValid && previousValid;
+  return {
+    eventNumber, timestampSeconds: view.getUint32(3, true),
+    formatVersion: extended ? 1 : 0,
+    newParsingFlag: !!(header & 0x40), doorClosed: !!(header & 0x80),
+    currentMv: currentValid ? rawCurrent : null,
+    previousMv: previousValid ? rawPrevious : null,
+    batteryPercent: currentValid ? slot[9] : null,
+    exceptionStatus: slot[10], batteryDrop,
+    voltageDropPercent: comparable
+      ? 100 * Math.max(rawPrevious - rawCurrent, 0) / rawPrevious : null,
+    gsmOn: extended ? !!(flags & 1) : null,
+    cameraOn: extended ? !!(flags & 2) : null,
+    espOn: extended ? !!(flags & 4) : null,
+    partialPower: extended ? !!(flags & 0x40) : null
+  };
+}
+
+function parseHealth(p, health){
+  const voltage=v=>v===null?'Unavailable':`${v} mV (${(v/1000).toFixed(3)} V)`;
+  const state=v=>v===null?'Unavailable':v?'ON':'OFF';
+  const extended=health.formatVersion===1;
+  return [
+    ['Health Format',extended?'Extended v1 (earlier firmware backlog)':'Legacy (periodic / older firmware)'],
+    ['Current Voltage',voltage(health.currentMv)],
+    ['Battery %',health.batteryPercent===null?'Unavailable':`${health.batteryPercent} %`],
+    ['Exception Status',`0x${hx(health.exceptionStatus)}`],
+    ['Previous Voltage',voltage(health.previousMv)],
+    ['Voltage Decrease',health.voltageDropPercent===null?'Unavailable':`${Math.max(health.previousMv-health.currentMv,0)} mV`],
+    ['Voltage Drop %',health.voltageDropPercent===null?'Unavailable':`${health.voltageDropPercent.toFixed(3)} %`],
+    ['Battery Voltage Drop',health.batteryDrop===null?'Unavailable':health.batteryDrop?'ALERT (firmware drop flag)':'No'],
+    ['GSM (commanded)',state(health.gsmOn)],
+    ['Camera (commanded)',state(health.cameraOn)],
+    ['ESP (commanded)',state(health.espOn)],
+    ['Partial Power',health.partialPower===null?'Unavailable':health.partialPower?'WARNING: inconsistent supply enables; OFF does not prove unpowered':'No'],
+    ['Raw Status',extended?`0x${hx(p[6])}`:'Unavailable'],
+    ['Additive Checksum',`Valid (0x${hx(p[extended?7:4])})`]
+  ];
+}
+function parseDiagnostics(p){let id=p[0],r=[['Diagnostics ID',DIAG_ID[id]||`Unknown (${id})`]];if(id===0)r.push(['Reboot Cause',`⚡ ${named(REBOOT_CAUSE,p[1],'Unknown')}`],['Raw Reset Reg',`0x${hx(u32(p,2),8)}`],['Last Running Task',named(TASK_ID,p[6],'Task')]);else if(id===1)r.push(['Battery Value',`${u16(p,1)}`],['Battery %',`${p[3]} %`]);else if(id===2)r.push(['Error Data',hxB(p.slice(1,6))]);else r.push(['Raw Union Data',hxB(p.slice(1,6))]);r.push(['CRC',`0x${hx(p[7])}`]);return r}
+function parseGSM(p){let e=p[0];if(e===24)return [['Error Event','GSM IP ASSIGNED (24)'],['IP Address',`${p[1]}.${p[2]}.${p[3]}.${p[4]}`],['CRC',`0x${hx(p[7])}`]];let b=p[6]>=5?`LTE_BAND_${p[6]-4} (${p[6]})`:p[6];return [['Error Event',`${GSM_ERROR_CODES[e]||'UNKNOWN'} (${e})`],['GSM On Duration',`${u16(p,1)} sec`],['Battery Vol',`${u16(p,3)} mV`],['Network Type',`${NETWORK_TYPES[p[5]]||'UNKNOWN'} (${p[5]})`],['Network Band',b],['CRC',`0x${hx(p[7])}`]]}
+function parser(type,p,health,sensor){if(type===3)return parseHealth(p,health);if(type===5)return parseDiagnostics(p);if(type===11)return parseGSM(p);if(type===1)return parseSensor(p,sensor);if(type===2)return [['Door Open Duration',`${u32(p,0)} sec`],['Door Event Status',`0x${hx(p[4])}`],['CRC',`0x${hx(p[5])}`]];if(type===4)return [['Movement Duration',`${u32(p,0)} sec`],['Movement Event Status',`0x${hx(p[4])}`],['CRC',`0x${hx(p[5])}`]];if(type===7)return [['Error Events',`0x${hx(p[0])}`],['ESP Duration',`${u16(p,1)} ms`],['Battery Vol',`${u16(p,3)} mV`],['CRC',`0x${hx(p[5])}`]];if(type===8)return [['Motion Event',`0x${hx(p[0])}`],['CRC',`0x${hx(p[1])}`]];return [['Raw Payload',hxB(p)]]}
+function parseEvent(b){
+  if(b.length!==15)throw new Error('Expected one 15-byte event slot');
+  if(b.every(v=>v===0))return null;
+  let n=u16(b,0),f=b[2],t=f&0x1F,ts=u32(b,3),p=b.slice(7);
+  const health=t===3?parseHealthSlot(Uint8Array.from(b)):null;
+  const sensor=t===1?parseSensorSlot(Uint8Array.from(b)):null;
+  return {evtNo:n,flagByte:f,dataType:t,typeName:EVENT_TYPE[t]||'UNKNOWN',doorStat:f>>7&1,newParse:f>>6&1,timestamp:ts,payload:p,health,sensor,raw:Array.from(b),details:parser(t,p,health,sensor)};
+}
+function bytesToHexText(b){
+  const parts=[];
+  const chunkSize=65536;
+  for(let start=0;start<b.length;start+=chunkSize){
+    const end=Math.min(start+chunkSize,b.length);
+    const part=new Array(end-start);
+    for(let i=start;i<end;i++) part[i-start]=hx(b[i]);
+    parts.push(part.join(' '));
+  }
+  return parts.join(' ');
+}
+function loadBinFile(e){
+  const f=e.target.files[0];
+  if(!f)return;
+  inputMode='bin';
+  binBytes=null;
+  error.style.display='none';
+  output.innerHTML='';
+  summary.style.display='none';
+  analysis.innerHTML='';
+  f.arrayBuffer().then(x=>{
+    binBytes=new Uint8Array(x);
+    hexInput.value=bytesToHexText(binBytes);
+  }).catch(err=>{
+    binBytes=null;
+    showError('Unable to read BIN file: '+err.message);
+  });
+}
+function extractEventsFromBin(b){
+  if(b.length<6)return null;
+  const mac=Array.from(b.slice(0,6));
+  const out=[];
+  let searchPos=0;
+  let sectionCount=0;
+  const macMatches=o=>mac.every((v,i)=>b[o+i]===v);
+
+  while(searchPos<b.length&&sectionCount<2){
+    let foundPos=-1;
+    let foundType=null;
+
+    for(let i=searchPos;i<b.length-7;i++){
+      if(b[i]===0x3A&&macMatches(i+1)){
+        foundPos=i;
+        foundType=0x3A;
+        break;
+      }
+      if(b[i]===0x32&&macMatches(i+1)&&b[i+7]===0x32){
+        foundPos=i;
+        foundType=0x32;
+        break;
+      }
+    }
+
+    if(foundPos===-1)break;
+    sectionCount++;
+
+    if(foundType===0x3A){
+      const eventCount=b[foundPos+7]|(b[foundPos+8]<<8);
+      const dataStart=foundPos+9;
+      const totalBytes=eventCount*15;
+      for(let n=0;n<eventCount;n++){
+        const start=dataStart+n*15;
+        const ev=b.slice(start,start+15);
+        if(ev.length===15)out.push(Array.from(ev));
+      }
+      searchPos=dataStart+totalBytes;
+    }else{
+      // 32 format: 32 + MAC + 32 + MAC + 00 + 15B event,
+      // followed by MAC + 00 + 15B event for additional events.
+      const firstEventStart=foundPos+15;
+      if(firstEventStart+15>b.length)break;
+      out.push(Array.from(b.slice(firstEventStart,firstEventStart+15)));
+
+      let ptr=firstEventStart+15;
+      while(ptr+22<=b.length&&macMatches(ptr)&&b[ptr+6]===0x00){
+        out.push(Array.from(b.slice(ptr+7,ptr+22)));
+        ptr+=22;
+      }
+      searchPos=ptr;
+    }
+  }
+  return out;
+}
+function gsmErrors(es){let skip=new Set([10,0,52,53,24,61,62,55]),c={};es.forEach(e=>{if(e.typeName==='GSM'&&!skip.has(e.payload[0]))c[e.payload[0]]=(c[e.payload[0]]||0)+1});return c}
+function analyze(es) {
+  let now = Date.now() / 1000;
+  let min = now - 13 * 86400;
+  let max = now + 5 * 86400;
+
+  // Invalid timestamps
+  let old = es.filter(
+    e => e.timestamp < min || e.timestamp > max
+  );
+
+  // Diagnostics events
+  let diags = es.filter(
+    e => e.typeName === 'DIAGNOSTICS' && e.payload[0] === 0
+  );
+
+  let d = diags.length ? diags[0] : null;
+
+  // Ignore soft reset (cause = 2)
+  let resetDiags = diags.filter(
+    e => e.payload[1] !== 2
+  );
+
+  let resetCauses = [
+    ...new Set(resetDiags.map(e => e.payload[1]))
+  ];
+
+  let allResetsSame = resetCauses.length === 1;
+
+  let relevantReset = resetDiags.length
+    ? resetDiags[0]
+    : null;
+
+  let relevantIndex = relevantReset
+    ? es.indexOf(relevantReset)
+    : -1;
+
+  let next = relevantIndex >= 0
+    ? es[relevantIndex + 1]
+    : null;
+
+  let hasReset = resetDiags.length > 0;
+
+  // --------------------------------------------------
+  // BATTERY
+  // --------------------------------------------------
+
+  let batterySource = 'none';
+  let bv = null;
+
+  if (hasReset) {
+
+    // Battery from Health event immediately after reset
+    if (next && next.typeName === 'HEALTH') {
+      bv = next.health.currentMv;
+      batterySource = 'health_after_reset';
+    }
+
+  } else {
+
+    // No reset:
+    // Pick the LAST GSM event code 10
+    let lastGsm10 = null;
+
+    for (let i = es.length - 1; i >= 0; i--) {
+      if (
+        es[i].typeName === 'GSM' &&
+        es[i].payload[0] === 10
+      ) {
+        lastGsm10 = es[i];
+        break;
+      }
+    }
+
+    if (lastGsm10) {
+
+      bv = u16(lastGsm10.payload, 3);
+      batterySource = 'last_gsm_power_off';
+
+    } else {
+
+      // If no GSM 10, use LAST Health event
+      for (let i = es.length - 1; i >= 0; i--) {
+
+        if (es[i].typeName === 'HEALTH') {
+          bv = es[i].health.currentMv;
+          batterySource = 'last_health';
+          break;
+        }
+
+      }
+    }
+  }
+
+  // --------------------------------------------------
+  // GSM ERRORS
+  // --------------------------------------------------
+
+  let g = gsmErrors(es);
+
+  let keys = Object.keys(g)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  let totalGsmErrors = keys.reduce(
+    (sum, k) => sum + g[k],
+    0
+  );
+
+  let hasGsmErrorCodes = keys.length > 0;
+
+  // --------------------------------------------------
+  // 2000+ INVALID TIMESTAMP CHECK
+  // --------------------------------------------------
+
+  let has2000sTimestamp = old.some(e => {
+
+    let y = new Date(
+      e.timestamp * 1000
+    ).getUTCFullYear();
+
+    return y >= 2000;
+  });
+
+  // --------------------------------------------------
+  // FINAL RESULT
+  // --------------------------------------------------
+
+  let final = 'No matching reason determined';
+
+  /*
+    GSM RESULT IS ELIGIBLE ONLY WHEN:
+
+    1. Invalid timestamp exists
+    2. At least one invalid timestamp is year 2000+
+    3. GSM error codes exist
+    4. More than 5 GSM errors
+  */
+
+  let gsmFinalEligible =
+    old.length > 0 &&
+    has2000sTimestamp &&
+    hasGsmErrorCodes &&
+    totalGsmErrors > 5;
+
+
+  // --------------------------------------------------
+  // GSM VS RESET PRIORITY
+  // --------------------------------------------------
+
+  if (gsmFinalEligible) {
+
+    let batteryResult =
+      bv === null
+        ? 'Battery status unavailable'
+        : bv < 3400
+          ? 'Low Battery'
+          : 'Battery is fine';
+
+
+    /*
+      LOW BATTERY:
+      GSM gets priority over reset.
+
+      FINE BATTERY:
+      Reset gets priority if all resets are the same.
+    */
+
+    if (
+      hasReset &&
+      bv !== null &&
+      bv >= 3400
+    ) {
+
+      // Fine battery + reset
+      // Reset gets priority
+
+      if (allResetsSame && relevantReset) {
+
+        let cause = relevantReset.payload[1];
+
+        let causeName =
+          (
+            REBOOT_CAUSE[cause] ||
+            `RESET_CAUSE_${cause}`
+          )
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+
+
+        if (cause === 0) {
+
+          final =
+            `Device Pin Reset / uploaded old events. / Battery is fine`;
+
+        } else if (cause === 4) {
+
+          final =
+            `Device Reset Read Failure / uploaded old events. / Battery is fine`;
+
+        } else {
+
+          final =
+            `${causeName} / uploaded old events. / Battery is fine`;
+        }
+      }
+
+    } else {
+
+      // No reset OR low battery
+      // GSM gets priority
+
+      final =
+        `GSM error / uploaded old events. / ${batteryResult}`;
+    }
+
+
+  } else if (
+    allResetsSame &&
+    relevantReset
+  ) {
+
+    // ------------------------------------------------
+    // RESET RESULT
+    // ------------------------------------------------
+
+    let cause = relevantReset.payload[1];
+
+    let battery =
+      bv === null
+        ? 'Battery status unavailable'
+        : bv < 3400
+          ? 'Low Battery'
+          : 'Battery is fine';
+
+    let causeName =
+      (
+        REBOOT_CAUSE[cause] ||
+        `RESET_CAUSE_${cause}`
+      )
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+
+
+    if (cause === 0) {
+
+      final =
+        `Device Pin Reset / uploaded old events. / ${battery}`;
+
+    } else if (cause === 4) {
+
+      final =
+        `Device Reset Read Failure / uploaded old events. / ${battery}`;
+
+    } else {
+
+      final =
+        `${causeName} / uploaded old events. / ${battery}`;
+    }
+  }
+
+
+  // --------------------------------------------------
+  // IMPORTANT: RETURN THE ANALYSIS OBJECT
+  // --------------------------------------------------
+
+  return {
+    old,
+    d,
+    next,
+    bv,
+    batterySource,
+    g,
+    keys,
+    totalGsmErrors,
+    hasGsmErrorCodes,
+    has2000sTimestamp,
+    final
+  };
+}
+function showAnalysis(es){
+  if(inputMode!=='bin')return;
+  let a=analyze(es),id='gd'+Date.now(),ar='ga'+Date.now(),tid='td'+Date.now(),tar='ta'+Date.now();
+  let gdetail=a.keys.map(k=>`<div class="gsm-detail-row">GSM Error ${k} - Count: ${a.g[k]}${GSM_ERROR_CODES[k]?` - ${GSM_ERROR_CODES[k]}`:''}</div>`).join('');
+  let tdetail=a.old.map(e=>`<div class="timestamp-detail-row">${epoch(e.timestamp)} (${e.timestamp})</div>`).join('');
+  let batteryText=a.bv===null?'Not checked':`${a.bv<3400?'Poor / Low Battery':'Fine'} - ${a.bv} mV (${(a.bv/1000).toFixed(2)} V)`;
+  let diagText=a.d?`Yes - ${a.d.details.map(x=>x[1]).join(' | ')}`:'No';
+  let gsmText=a.keys.length?'Yes':'No';
+  let invalidText=a.old.length?'Yes':'No';
+  // COPY should contain only the final analysis result.
+  window.lastAnalysisText=a.final;
+  analysis.innerHTML=`<div class="analysis-wrap"><div class="analysis-header"><div class="analysis-title">Analysis</div><div><button class="btn-copy" onclick="copyAnalysis()">COPY</button><span id="copyStatus" class="copy-status"></span></div></div><div class="analysis-grid"><div class="analysis-label">Invalid Timestamp</div><div><span class="timestamp-toggle" onclick="tg('${tid}','${tar}')">${invalidText} ${a.old.length?`<span id="${tar}">▶</span>`:''}</span><div id="${tid}" class="timestamp-details">${tdetail}</div></div><div class="analysis-label">Battery</div><div>${batteryText}</div><div class="analysis-label">Reset/Diagnostic</div><div>${diagText}</div><div class="analysis-label">GSM Errors</div><div><span class="gsm-toggle" onclick="tg('${id}','${ar}')">${gsmText} ${a.keys.length?`<span id="${ar}">▶</span>`:''}</span><div id="${id}" class="gsm-details">${gdetail}</div></div></div><div class="final-result">Final Result - ${a.final}</div></div>`
+}
+async function copyAnalysis(){
+  if(!window.lastAnalysisText)return;
+  try{
+    await navigator.clipboard.writeText(window.lastAnalysisText);
+  }catch(e){
+    const ta=document.createElement('textarea');
+    ta.value=window.lastAnalysisText;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+  }
+  const s=document.getElementById('copyStatus');
+  if(s){s.textContent='Copied';setTimeout(()=>{s.textContent=''},1500)}
+}
+function tg(id,a){let e=document.getElementById(id),x=document.getElementById(a);e.style.display=e.style.display==='block'?'none':'block';if(x)x.textContent=e.style.display==='block'?'▼':'▶'}
+function showError(m){error.textContent='⚠ '+m;error.style.display='block'}
+function parse(){
+  window.lastAnalysisText='';
+  error.style.display='none';
+  output.innerHTML='';
+  summary.style.display='none';
+  analysis.innerHTML='';
+
+  let b;
+  if(inputMode==='bin'){
+    if(!binBytes||!binBytes.length)return showError('No BIN file loaded.');
+    b=binBytes;
+  }else{
+    const text=hexInput.value.trim();
+    if(!text)return showError('No input provided.');
+    const tok=text.split(/[\s,]+/).filter(Boolean);
+    b=[];
+    for(let t of tok){
+      if(!/^[0-9a-fA-F]{1,2}$/.test(t))return showError(`Invalid hex token: "${t}"`);
+      b.push(parseInt(t,16));
+    }
+  }
+
+  let chunks=inputMode==='bin'?extractEventsFromBin(b):b.length%15===0?Array.from({length:b.length/15},(_,i)=>b.slice(i*15,i*15+15)):null;
+  if(!chunks)return showError(inputMode==='bin'?'Unable to locate valid event blocks.':'Event data must be in multiples of 15 bytes.');
+  let es=[],rejected=[],empty=0;
+  chunks.forEach((chunk,i)=>{
+    try{const event=parseEvent(chunk);if(event)es.push(event);else empty++;}
+    catch(err){rejected.push(`Slot ${i+1}: ${err.message}`);}
+  });
+  if(rejected.length)showError(`${rejected.length} malformed event(s) excluded. ${rejected.join('; ')}`);
+  let counts={};es.forEach(e=>counts[e.typeName]=(counts[e.typeName]||0)+1);summary.innerHTML=`<div class="sum-chip">Total Events: <span>${es.length}</span></div><div class="sum-chip">Rejected: <span>${rejected.length}</span></div><div class="sum-chip">Empty slots: <span>${empty}</span></div><div class="sum-chip">Battery drop alerts: <span>${es.filter(e=>(e.sensor&&e.sensor.batteryDrop)||(e.health&&e.health.batteryDrop)).length}</span></div>`+Object.entries(counts).map(([k,v])=>`<div class="sum-chip">${k}: <span>${v}</span></div>`).join('');summary.style.display='flex';showAnalysis(es);output.innerHTML='<div class="table-wrap"><table><thead><tr><th>#</th><th>Event No</th><th>Type</th><th>Door</th><th>New Parse</th><th>Timestamp (UTC)</th><th>Epoch</th><th>Details</th><th>Raw (15B)</th></tr></thead><tbody>'+es.map((e,i)=>`<tr><td>${i+1}</td><td class="mono">${e.evtNo}<br><small>(0x${hx(e.evtNo,4)})</small></td><td><span class="badge ${BADGE_CLASS[e.typeName]||'badge-unknown'}">${e.typeName}</span></td><td>${e.doorStat?'closed':'OPEN'}</td><td>${e.newParse?'✓':'—'}</td><td>${epoch(e.timestamp)}</td><td>${e.timestamp}</td><td><div class="detail-grid">${e.details.map(x=>`<div class="dk">${x[0]}</div><div class="dv">${x[1]}</div>`).join('')}</div></td><td class="mono">${hxB(e.raw)}</td></tr>`).join('')+'</tbody></table></div>'}
+function clearAll(){inputMode='hex';binBytes=null;hexInput.value='';error.style.display='none';output.innerHTML='';summary.style.display='none';analysis.innerHTML='';binFile.value=''}
+function loadSample(){inputMode='hex';binBytes=null;hexInput.value='2A 00 61 00 F1 53 65 FA 00 28 64 00 B2 B9 05\n2A 00 61 00 F1 53 65 FA 00 28 64 00 B2 B1 0D\n2A 00 41 00 F1 53 65 FA 00 28 64 00 80 80 90\n2A 00 61 00 F1 53 65 FA 00 28 64 00 32 3E 00\n2A 00 43 00 F1 53 65 D8 0E 32 00 FC 00 00 00\n2A 00 63 00 F1 53 65 D8 0E 32 00 A0 0F B9 74\n4F 17 0B 71 58 7E 69 35 10 00 00 00 04 10 B0\n50 17 0B 7A 58 7E 69 18 B9 0A 1F C9 00 00 79\n51 17 1B 80 58 7E 69 00 00 00 00 00 00 00 00';parse()}
+</script></body></html>

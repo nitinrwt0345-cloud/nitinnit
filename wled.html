@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>WLED GIF Player · 16×8</title>
+<style>
+:root{color-scheme:dark;--bg:#101318;--panel:#1a2029;--muted:#9ba7b7;--accent:#7dd3fc;--line:#303846}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f3f6fa;font:16px system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:620px;margin:auto;padding:18px 14px 34px}
+h1{font-size:1.45rem;margin:4px 0 5px}p{color:var(--muted);line-height:1.45;margin:5px 0 14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px;margin:12px 0}
+label{display:block;font-weight:600;margin:8px 0 6px}
+input,button{font:inherit}input[type=text],input[type=number],input[type=file]{width:100%;background:#0e1218;color:#f3f6fa;border:1px solid #3a4555;border-radius:10px;padding:11px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+button{border:0;border-radius:11px;padding:12px 14px;background:var(--accent);color:#061018;font-weight:750;cursor:pointer}
+button.secondary{background:#303b4a;color:#f3f6fa}button:disabled{opacity:.45}
+.row{display:flex;gap:9px;align-items:center}.row>*{flex:1;min-width:0}
+#preview{width:100%;max-width:480px;aspect-ratio:2/1;image-rendering:pixelated;background:#000;border:1px solid #394354;border-radius:10px;display:block;margin:12px auto}
+.status{font-size:.9rem;white-space:pre-wrap;overflow-wrap:anywhere;background:#0e1218;border-radius:10px;padding:10px;color:#c5d1df}
+.small{font-size:.82rem}.value{color:var(--accent);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body><main>
+<h1>WLED GIF Player <span class="value">16×8</span></h1>
+<p>Choose a GIF on your phone and stream its 128 pixels to WLED on your local Wi-Fi.</p>
+<section class="panel">
+<label for="ip">WLED IP address</label>
+<input id="ip" type="text" inputmode="decimal" value="192.168.1.39" autocomplete="off">
+<label for="gif">Choose animated GIF</label>
+<input id="gif" type="file" accept="image/gif,.gif">
+<canvas id="preview" width="320" height="160"></canvas>
+<div class="row">
+<button id="play" disabled>▶ Play on LEDs</button>
+<button id="stop" class="secondary" disabled>■ Stop</button>
+</div>
+</section>
+<section class="panel">
+<label for="brightness">Brightness <span class="value" id="brightValue">1% (output 10%)</span></label>
+<input id="brightness" type="range" min="1" max="100" value="1">
+<p class="small">Brightness is applied to the pixel colours before each frame is sent. Slider 1% maps to 10% output, so dim settings remain visible.</p>
+<label for="fps">Playback speed <span class="value" id="fpsValue">8 FPS</span></label>
+<input id="fps" type="range" min="1" max="15" value="8">
+<div class="row" style="margin-top:12px">
+<button id="test" class="secondary">Test connection</button>
+<button id="normal" class="secondary">Return to WLED effects</button>
+</div>
+</section>
+<section class="panel">
+<strong>Status</strong>
+<div id="status" class="status" style="margin-top:8px">Choose a GIF to begin. Your phone and WLED must be on the same Wi-Fi network.</div>
+<p class="small">Note: browsers cannot send raw UDP. This page uses WLED's HTTP JSON API to send each frame as 128 RGB color arrays (the documented individual-LED format), so it may run slower than the PC UDP player. HTTPS-hosted pages can be blocked from contacting WLED's local HTTP address by browser security; see the included README if that happens.</p>
+</section>
+</main>
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const canvas = $('preview'), ctx = canvas.getContext('2d', {willReadFrequently:true});
+const pixelCanvas = document.createElement('canvas');
+pixelCanvas.width = 16; pixelCanvas.height = 8;
+const pixelCtx = pixelCanvas.getContext('2d', {willReadFrequently:true});
+pixelCtx.imageSmoothingEnabled = false;
+ctx.imageSmoothingEnabled = false;
+let gifUrl = null, frames = [], delays = [], frameIndex = 0, timer = null, playing = false, requestBusy = false;
+const setStatus = text => $('status').textContent = text;
+const base = () => {
+  let ip = $('ip').value.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+  if (!ip) throw new Error('Enter the WLED IP address.');
+  return 'http://' + ip;
+};
+function effectiveBrightness(uiValue) {
+  // Map the full slider range 1..100 to an effective RGB scale of 10..100.
+  return 10 + ((Number(uiValue) - 1) * 90 / 99);
+}
+$('brightness').addEventListener('input', () => {
+  const ui = Number($('brightness').value);
+  $('brightValue').textContent = `${ui}% (output ${Math.round(effectiveBrightness(ui))}%)`;
+});
+$('fps').addEventListener('input', () => $('fpsValue').textContent = $('fps').value + ' FPS');
+
+$('gif').addEventListener('change', async () => {
+  stopPlayback();
+  frames = []; delays = [];
+  const file = $('gif').files && $('gif').files[0];
+  if (!file) return;
+  if (gifUrl) URL.revokeObjectURL(gifUrl);
+  gifUrl = URL.createObjectURL(file);
+  try {
+    const bitmap = await createImageBitmap(file);
+    const w = bitmap.width, h = bitmap.height;
+    const temp = document.createElement('canvas'); temp.width = w; temp.height = h;
+    const tctx = temp.getContext('2d', {willReadFrequently:true});
+    // Animated GIF decoding in browsers varies; use ImageDecoder where available to read every frame.
+    if ('ImageDecoder' in window) {
+      const bytes = await file.arrayBuffer();
+      const decoder = new ImageDecoder({data: bytes, type: file.type || 'image/gif'});
+      await decoder.tracks.ready;
+      const track = decoder.tracks.selectedTrack;
+      const count = Math.min(track.frameCount || 1, 300);
+      for (let i=0; i<count; i++) {
+        const result = await decoder.decode({frameIndex:i});
+        const image = result.image;
+        tctx.clearRect(0,0,w,h);
+        tctx.drawImage(image,0,0,w,h);
+        frames.push(resizePixels(temp));
+        delays.push(Math.max(40, Math.round((result.image.duration || 100000) / 1000)));
+        image.close();
+      }
+      decoder.close();
+    } else {
+      // Fallback: use the browser's animated image and sample frames at intervals.
+      const img = new Image();
+      img.src = gifUrl;
+      await img.decode();
+      const duration = Math.max(400, Number(file.size) / 800);
+      const count = Math.max(2, Math.min(60, Math.ceil(duration / 100)));
+      for (let i=0; i<count; i++) {
+        await new Promise(r => setTimeout(r, 110));
+        tctx.clearRect(0,0,w,h); tctx.drawImage(img,0,0,w,h);
+        frames.push(resizePixels(temp)); delays.push(100);
+      }
+    }
+    bitmap.close();
+    if (!frames.length) throw new Error('Could not decode GIF frames in this browser.');
+    drawPreview(0);
+    $('play').disabled = false;
+    setStatus(`Loaded ${file.name}: ${frames.length} frames. Ready to test.`);
+  } catch (e) {
+    setStatus('Could not read this GIF: ' + e.message + '\nTry Chrome on Android or a different GIF.');
+  }
+});
+
+function resizePixels(source) {
+  const small = document.createElement('canvas'); small.width=16; small.height=8;
+  const sctx = small.getContext('2d', {willReadFrequently:true});
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(source,0,0,16,8);
+  return Array.from(sctx.getImageData(0,0,16,8).data);
+}
+function drawPreview(i) {
+  if (!frames.length) return;
+  const f = frames[i];
+  const img = pixelCtx.createImageData(16, 8);
+  img.data.set(f);
+  pixelCtx.putImageData(img, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(pixelCanvas, 0, 0, canvas.width, canvas.height);
+}
+async function postState(path, payload) {
+  const response = await fetch(base() + path, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
+    cache:'no-store'
+  });
+  if (!response.ok) throw new Error('WLED HTTP error ' + response.status);
+  return response;
+}
+async function sendFrame(pixels) {
+  const scale = effectiveBrightness($('brightness').value) / 100;
+  const ledData = [];
+  for (let i = 0; i < 128; i++) {
+    const j = i * 4;
+    const r = Math.max(0, Math.min(255, Math.round(pixels[j] * scale)));
+    const g = Math.max(0, Math.min(255, Math.round(pixels[j + 1] * scale)));
+    const b = Math.max(0, Math.min(255, Math.round(pixels[j + 2] * scale)));
+    // WLED JSON API expects one RGB color per LED, not a flat list of bytes.
+    ledData.push([r, g, b]);
+  }
+  // Keep global brightness at full; the slider scales each pixel's RGB values.
+  // WLED's documented individual-LED JSON format is seg.i = [[r,g,b], ...].
+  await postState('/json/state', {
+    on: true,
+    bri: 255,
+    transition: 0,
+    seg: [{ id: 0, i: ledData }]
+  });
+}
+async function tick() {
+  if (!playing || requestBusy) return;
+  requestBusy = true;
+  const index = frameIndex;
+  try {
+    drawPreview(index);
+    await sendFrame(frames[index]);
+    frameIndex = (frameIndex+1)%frames.length;
+  } catch (e) {
+    stopPlayback();
+    setStatus('Could not send frame to WLED.\n' + e.message + '\n\nIf this page is on an HTTPS domain, the browser may block HTTP access to the local WLED IP (mixed content/CORS). Try opening this page over HTTP or use a local bridge.');
+    requestBusy = false;
+    return;
+  }
+  requestBusy = false;
+  if (playing) timer = setTimeout(tick, Math.max(30, 1000/Number($('fps').value)));
+}
+function stopPlayback() {
+  playing = false;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  $('play').disabled = !frames.length;
+  $('stop').disabled = true;
+}
+$('play').addEventListener('click', () => {
+  if (!frames.length) return;
+  frameIndex=0; playing=true;
+  $('play').disabled=true; $('stop').disabled=false;
+  setStatus('Streaming frames to WLED…');
+  tick();
+});
+$('stop').addEventListener('click', () => {
+  stopPlayback();
+  setStatus('Stopped. If WLED still shows realtime mode, tap the star in WLED to return to normal effects.');
+});
+$('test').addEventListener('click', async () => {
+  setStatus('Testing WLED connection…');
+  try {
+    const r = await fetch(base() + '/json/info', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const info = await r.json();
+    setStatus(`Connected to WLED ${info.ver || ''} at ${base()}.\nIf playback fails, check browser security / CORS.`);
+  } catch (e) {
+    setStatus('Connection test failed: ' + e.message + '\nThe browser may be blocking access from this page to local WLED. See README for the recommended local bridge option.');
+  }
+});
+$('normal').addEventListener('click', async () => {
+  stopPlayback();
+  try {
+    await postState('/json/state', {on:true, seg:[{id:0, fx:0}]});
+    setStatus('Requested WLED Solid effect. You can also tap the star in the WLED app/browser.');
+  } catch(e) {
+    setStatus('Could not send the command: ' + e.message + '\nTap the star in WLED to exit realtime mode.');
+  }
+});
+})();
+</script>
+</body></html>
